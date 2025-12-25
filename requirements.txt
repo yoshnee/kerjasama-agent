@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+sqlalchemy
+psycopg2-binary
+requests
+setfit
+sentence-transformers
+datasets
+pytest
