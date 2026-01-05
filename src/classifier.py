@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Model configuration
 MODEL_NAME = "answerdotai/ModernBERT-base"
-DEFAULT_MODEL_PATH = "whatsapp_intent_model"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, "whatsapp_intent_model")
 
 
 # Training examples for each category
