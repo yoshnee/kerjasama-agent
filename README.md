@@ -67,11 +67,11 @@ The message classifier uses a pre-trained SetFit model. The model must be traine
 ```bash
 python train_classifier.py
 ```
-This saves the trained model to `whatsapp_intent_model/`.
+This saves the trained model to `src/whatsapp_intent_model/`.
 
 ### Commit the model for deployment:
 ```bash
-git add whatsapp_intent_model/
+git add src/whatsapp_intent_model/
 git commit -m "Add trained classifier model"
 ```
 

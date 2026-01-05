@@ -6,10 +6,11 @@ Usage:
     python train_classifier.py
 
 This script fine-tunes the SetFit model on the training examples
-and saves the trained model to 'whatsapp_intent_model/' folder.
+and saves the trained model to 'src/whatsapp_intent_model/' folder.
 """
 
 import logging
+import os
 import sys
 
 from setfit import SetFitModel, Trainer, TrainingArguments
@@ -24,7 +25,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-OUTPUT_PATH = "whatsapp_intent_model"
+# Save to src/whatsapp_intent_model/ to match DEFAULT_MODEL_PATH in classifier.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_PATH = os.path.join(BASE_DIR, "src", "whatsapp_intent_model")
 
 
 def main():
