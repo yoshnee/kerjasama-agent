@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 # Model configuration
 MODEL_NAME = "answerdotai/ModernBERT-base"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, "whatsapp_intent_model")
 
 
@@ -156,7 +155,7 @@ class MessageClassifier:
             )
 
         logger.info("Loading pre-trained model from %s", model_path)
-        self.model = SetFitModel.from_pretrained(model_path, local_files_only=True, use_safetensors=True, trust_remote_code=True
+        self.model = SetFitModel.from_pretrained(model_path, local_files_only=True, use_safetensors=True, trust_remote_code=True)
         logger.info("Loaded pre-trained model")
 
         # Dynamically generate label mappings from TRAINING_EXAMPLES keys
