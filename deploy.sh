@@ -19,12 +19,13 @@ gcloud run deploy $SERVICE_NAME \
   --source . \
   --project $PROJECT_ID \
   --region $REGION \
+  --add-cloudsql-instances=kerjasama-dev:europe-west2:kerjasama-db \
   --platform managed \
   --allow-unauthenticated \
   --set-secrets="WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token:latest,WHATSAPP_APP_SECRET=whatsapp-app-secret:latest,DATABASE_URL=database-url:latest,GOOGLE_ADK_API_KEY=google-adk-api-key:latest,ENCRYPTION_KEY=encryption-key:latest" \
   --memory=4Gi \
   --cpu=1 \
-  --timeout=60 \
+  --timeout=90 \
   --min-instances=0 \
   --max-instances=5
 

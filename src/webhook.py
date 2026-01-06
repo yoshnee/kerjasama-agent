@@ -5,8 +5,12 @@ import hashlib
 import hmac
 import logging
 import os
+import time
 
 from typing import Optional
+
+# Messages older than this are considered stale and will be skipped
+STALE_MESSAGE_THRESHOLD_SECONDS = 900  # 15 minutes
 
 from fastapi import APIRouter, Request, Response, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -96,13 +100,28 @@ def extract_message(payload: dict) -> Optional[dict]:
 
         value = changes[0].get("value", {})
 
-        # Check if this is a message (not a status update)
+        # Check if this is a status update (not a message)
+        statuses = value.get("statuses", [])
+        if statuses:
+            logger.debug("Status update received (sent/delivered/read) - ignoring")
+            return None
+
+        # Check if this is a message
         messages = value.get("messages", [])
         if not messages:
-            logger.debug("No messages in payload (might be status update)")
+            logger.debug("No messages in payload - ignoring")
             return None
 
         message = messages[0]
+
+        # Check if message is stale (older than 15 minutes)
+        message_timestamp = int(message.get("timestamp", 0))
+        current_time = int(time.time())
+        message_age = current_time - message_timestamp
+
+        if message_age > STALE_MESSAGE_THRESHOLD_SECONDS:
+            logger.info("Skipping stale message (%d minutes old)", message_age // 60)
+            return None
 
         # Only process text messages for now
         if message.get("type") != "text":
@@ -255,16 +274,19 @@ async def handle_webhook(request: Request):
     # Extract message details
     message_data = extract_message(payload)
 
-    if message_data:
-        # Process message asynchronously (don't wait for completion)
-        # In production, you might want to use a task queue here
-        await process_message(
-            from_phone=message_data["from"],
-            to_phone=message_data["to"],
-            message_text=message_data["text"],
-            business_account_id=message_data["business_account_id"],
-            phone_number_id=message_data["phone_number_id"]
-        )
+    if not message_data:
+        logger.debug("Exiting early - no message to process")
+        return Response(status_code=200)
+
+    # Process the message
+    logger.info("Processing message from %s: %s", message_data["from"], message_data["text"][:50])
+    await process_message(
+        from_phone=message_data["from"],
+        to_phone=message_data["to"],
+        message_text=message_data["text"],
+        business_account_id=message_data["business_account_id"],
+        phone_number_id=message_data["phone_number_id"]
+    )
 
     # Always return 200 OK quickly
     return Response(status_code=200)

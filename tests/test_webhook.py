@@ -3,11 +3,22 @@
 import hashlib
 import hmac
 import json
+import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from src.webhook import verify_signature, extract_message, router
+from src.webhook import verify_signature, extract_message, router, STALE_MESSAGE_THRESHOLD_SECONDS
 from utils.constants import CATEGORY_GREETING, CATEGORY_AVAILABILITY, CATEGORY_PRICING, CATEGORY_OTHER
+
+
+def get_fresh_timestamp():
+    """Get a timestamp that's within the staleness threshold."""
+    return str(int(time.time()) - 60)  # 1 minute ago
+
+
+def get_stale_timestamp():
+    """Get a timestamp that's older than the staleness threshold."""
+    return str(int(time.time()) - STALE_MESSAGE_THRESHOLD_SECONDS - 60)  # 16 minutes ago
 
 
 # =============================================================================
@@ -242,7 +253,32 @@ def test_message_extraction_text_message():
     - Correctly extracts message text
     - Correctly extracts business_account_id
     """
-    result = extract_message(SAMPLE_TEXT_MESSAGE_PAYLOAD)
+    # Use fresh timestamp to avoid staleness check
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "123456789",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "15551234567",
+                        "phone_number_id": "phone_id_123"
+                    },
+                    "messages": [{
+                        "from": "14155551234",
+                        "id": "wamid.abc123",
+                        "timestamp": get_fresh_timestamp(),
+                        "type": "text",
+                        "text": {"body": "Hello, I need your services"}
+                    }]
+                },
+                "field": "messages"
+            }]
+        }]
+    }
+
+    result = extract_message(payload)
 
     assert result is not None
     assert result["from"] == "14155551234"
@@ -274,14 +310,94 @@ def test_message_extraction_non_text_message():
     - Audio messages return None
     - Document messages return None
     """
-    # Image message
-    result = extract_message(SAMPLE_IMAGE_MESSAGE_PAYLOAD)
+    # Image message with fresh timestamp
+    image_payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "123456789",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "15551234567",
+                        "phone_number_id": "phone_id_123"
+                    },
+                    "messages": [{
+                        "from": "14155551234",
+                        "id": "wamid.abc123",
+                        "timestamp": get_fresh_timestamp(),
+                        "type": "image",
+                        "image": {"id": "img123", "mime_type": "image/jpeg"}
+                    }]
+                },
+                "field": "messages"
+            }]
+        }]
+    }
+    result = extract_message(image_payload)
     assert result is None
 
     # Audio message
-    audio_payload = SAMPLE_IMAGE_MESSAGE_PAYLOAD.copy()
-    audio_payload["entry"][0]["changes"][0]["value"]["messages"][0]["type"] = "audio"
+    audio_payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "123456789",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "15551234567",
+                        "phone_number_id": "phone_id_123"
+                    },
+                    "messages": [{
+                        "from": "14155551234",
+                        "id": "wamid.abc123",
+                        "timestamp": get_fresh_timestamp(),
+                        "type": "audio",
+                        "audio": {"id": "audio123"}
+                    }]
+                },
+                "field": "messages"
+            }]
+        }]
+    }
     result = extract_message(audio_payload)
+    assert result is None
+
+
+def test_message_extraction_stale_message():
+    """
+    Test extract_message returns None for messages older than 15 minutes.
+
+    Should verify:
+    - Messages older than STALE_MESSAGE_THRESHOLD_SECONDS are ignored
+    - Stale messages return None without processing
+    """
+    stale_payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "123456789",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "15551234567",
+                        "phone_number_id": "phone_id_123"
+                    },
+                    "messages": [{
+                        "from": "14155551234",
+                        "id": "wamid.abc123",
+                        "timestamp": get_stale_timestamp(),
+                        "type": "text",
+                        "text": {"body": "This message is too old"}
+                    }]
+                },
+                "field": "messages"
+            }]
+        }]
+    }
+
+    result = extract_message(stale_payload)
     assert result is None
 
 
@@ -305,7 +421,31 @@ def test_webhook_post_returns_200(client):
     - Response is returned within acceptable time (< 20 seconds)
     """
     app_secret = "test_secret"
-    payload = json.dumps(SAMPLE_TEXT_MESSAGE_PAYLOAD).encode()
+    # Use fresh timestamp payload
+    fresh_payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "123456789",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "15551234567",
+                        "phone_number_id": "phone_id_123"
+                    },
+                    "messages": [{
+                        "from": "14155551234",
+                        "id": "wamid.abc123",
+                        "timestamp": get_fresh_timestamp(),
+                        "type": "text",
+                        "text": {"body": "Hello, I need your services"}
+                    }]
+                },
+                "field": "messages"
+            }]
+        }]
+    }
+    payload = json.dumps(fresh_payload).encode()
 
     # Calculate valid signature
     signature = "sha256=" + hmac.new(
