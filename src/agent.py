@@ -3,10 +3,16 @@
 
 import logging
 import os
+from typing import Optional
 
 from google import genai
 
 from models import Business
+from src.database_client import DatabaseClient
+from src.services.calendar import (
+    get_calendar_availability,
+    format_availability_for_prompt,
+)
 from utils.constants import (
     CATEGORY_GREETING,
     CATEGORY_AVAILABILITY,
@@ -14,7 +20,9 @@ from utils.constants import (
     BUSINESS_AI_VOICE_FIRST_PERSON,
     BUSINESS_AI_VOICE_NAME,
     BUSINESS_AI_VOICE_WE,
+    OAUTH_PROVIDER_GOOGLE,
 )
+from utils.date_parser import extract_datetime_range
 from prompts import GREETING_PROMPT, PRICING_PROMPT, AVAILABILITY_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -24,6 +32,9 @@ AI_DISCLAIMER = "\n\n---\n🤖 This response was AI generated"
 FALLBACK_RESPONSE = "I'm sorry, I'm having trouble processing your request right now. Please try again later."
 
 GEMINI_MODEL = "gemini-2.0-flash"
+
+# Early return messages for AVAILABILITY when we can't proceed to Gemini
+NO_DATE_RESPONSE = "I'd be happy to check availability! Could you let me know which date you're interested in?"
 
 # =============================================================================
 # AI AGENT
@@ -35,11 +46,13 @@ class AIAgent:
 
     def __init__(self):
         """
-        Initialize agent with Gemini client.
+        Initialize agent with Gemini client and database client.
 
         Requires GOOGLE_ADK_API_KEY environment variable.
         """
         logger.info("Initializing AIAgent")
+
+        self.db_client = DatabaseClient()
 
         api_key = os.getenv("GOOGLE_ADK_API_KEY")
         if not api_key:
@@ -65,7 +78,8 @@ class AIAgent:
         self,
         message: str,
         classification: str,
-        business: Business
+        business: Business,
+        availability_info: Optional[str] = None,
     ) -> str:
         """
         Generate response using Gemini based on message classification.
@@ -74,6 +88,7 @@ class AIAgent:
             message: The customer's message text
             classification: GREETING, AVAILABILITY, or PRICING
             business: Business object with context
+            availability_info: Formatted availability info for AVAILABILITY classification
 
         Returns:
             Generated response text, or fallback message on error
@@ -83,7 +98,7 @@ class AIAgent:
             return FALLBACK_RESPONSE
 
         # Build prompt based on classification
-        prompt = self._build_prompt(message, classification, business)
+        prompt = self._build_prompt(message, classification, business, availability_info)
 
         try:
             response = self.client.models.generate_content(
@@ -105,7 +120,8 @@ class AIAgent:
         self,
         message: str,
         classification: str,
-        business: Business
+        business: Business,
+        availability_info: Optional[str] = None,
     ) -> str:
         """Build the appropriate prompt based on classification."""
         voice_instruction = self._get_voice_instruction(business.ai_voice)
@@ -125,7 +141,7 @@ class AIAgent:
                 business_vertical=business_vertical,
                 voice_instruction=voice_instruction,
                 message=message,
-                availability_info="Calendar integration pending - assume available"
+                availability_info=availability_info or "No availability information",
             )
         elif classification == CATEGORY_PRICING:
             return PRICING_PROMPT.format(
@@ -162,4 +178,68 @@ class AIAgent:
             business.id if business else None
         )
 
+        # AVAILABILITY requires calendar lookup before calling Gemini
+        if category == CATEGORY_AVAILABILITY:
+            return await self._handle_availability(message, business)
+
         return self.generate_response(message, category, business)
+
+    async def _handle_availability(self, message: str, business: Business) -> str:
+        """
+        Handle AVAILABILITY category with calendar lookup.
+
+        Flow:
+        1. Extract date/time from message
+        2. If no date found, return early asking for a date
+        3. Get OAuth token for user's Google Calendar
+        4. Query FreeBusy API for availability
+        5. Pass availability info to Gemini for response generation
+
+        Args:
+            message: The customer's message text
+            business: Business object to respond for
+
+        Returns:
+            Generated response or early return message
+        """
+        # 1. Extract date from message
+        date_range = extract_datetime_range(message)
+
+        if date_range is None:
+            logger.info("No date found in availability message, returning early")
+            return NO_DATE_RESPONSE
+
+        time_min, time_max = date_range
+        logger.info("Extracted date range: %s to %s", time_min, time_max)
+
+        # 2. Get OAuth token for this business's user
+        oauth_token = self.db_client.get_oauth_token(business.user_id, OAUTH_PROVIDER_GOOGLE)
+
+        if not oauth_token:
+            logger.error("No Google Calendar OAuth token for user_id=%s", business.user_id)
+            return
+
+        # 3. Check calendar availability via FreeBusy API
+        availability = get_calendar_availability(
+            access_token=oauth_token.access_token,
+            refresh_token=oauth_token.refresh_token,
+            token_expiry=oauth_token.token_expiry,
+            oauth_token_id=oauth_token.id,
+            time_min=time_min,
+            time_max=time_max,
+        )
+
+        if availability.error:
+            logger.error("Calendar API error: %s", availability.error)
+            return
+
+        # 4. Format availability and generate response with Gemini
+        availability_info = format_availability_for_prompt(availability)
+        logger.info("Availability info: %s", availability_info)
+
+        return self.generate_response(
+            message=message,
+            classification=CATEGORY_AVAILABILITY,
+            business=business,
+            availability_info=availability_info,
+        )

@@ -7,10 +7,12 @@ Each method manages its own database session to ensure proper cleanup.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 import uuid
 
 from src.database import SessionLocal
+from utils.crypto import encrypt_token
 from models import User, OAuthToken, Business
 from utils.constants import BUSINESS_WORKFLOW_STATUS_ACTIVE
 from utils.crypto import decrypt_token
@@ -97,6 +99,39 @@ class DatabaseClient:
                     token.refresh_token = decrypt_token(token.refresh_token)
 
             return token
+        finally:
+            db.close()
+
+    def update_oauth_token(
+        self,
+        oauth_token_id: uuid.UUID,
+        access_token: str,
+        token_expiry: datetime,
+    ) -> bool:
+        """
+        Update OAuth token after refresh.
+
+        Args:
+            oauth_token_id: OAuth token primary key UUID
+            access_token: New access token (plain text, will be encrypted)
+            token_expiry: New token expiry time
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        db = SessionLocal()
+        try:
+            oauth_token = db.query(OAuthToken).filter(OAuthToken.id == oauth_token_id).first()
+
+            if oauth_token:
+                oauth_token.access_token = encrypt_token(access_token)
+                oauth_token.token_expiry = token_expiry
+                db.commit()
+                logger.info("Updated OAuth token %s with new access token", oauth_token_id)
+                return True
+            else:
+                logger.error("OAuth token %s not found for update", oauth_token_id)
+                return False
         finally:
             db.close()
 
