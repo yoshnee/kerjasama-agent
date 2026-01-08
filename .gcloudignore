@@ -1,0 +1,12 @@
+.git
+.gitignore
+bin/
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+tests/
+checkpoints/
+# DO NOT ignore the model
+!src/whatsapp_intent_model/

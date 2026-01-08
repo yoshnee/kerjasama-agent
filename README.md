@@ -41,14 +41,45 @@ WhatsApp AI agent that responds to availability and pricing inquiries.
    # Edit .env with your configuration
    ```
 
-5. Run the application:
+5. Train the classifier (required before first run):
    ```bash
-   uvicorn main:app --reload
+   python train_classifier.py
+   ```
+
+6. Run the application:
+   ```bash
+   uvicorn main:app --reload --log-level debug
+   ```
+
+   ```bash
+   ngrok http 8000
    ```
 
 ## API Endpoints
 
 - `GET /` - Health check endpoint
+
+## Classifier Training
+
+The message classifier uses a pre-trained SetFit model. The model must be trained before running the service.
+
+### Train the model (required before first run):
+```bash
+python train_classifier.py
+```
+This saves the trained model to `src/whatsapp_intent_model/`.
+
+### Commit the model for deployment:
+```bash
+git add src/whatsapp_intent_model/
+git commit -m "Add trained classifier model"
+```
+
+### When to re-train:
+- After updating TRAINING_EXAMPLES in classifier.py
+- After changing the model backbone
+
+Note: Training takes ~4 minutes. The model is committed to the repo so deployment is fast.
 
 ## Running Tests
 
@@ -61,6 +92,10 @@ pip3 install -r requirements-dev.txt
 ```
 
 ### Run Tests
+
+```bash
+  pip install -r requirements-dev.txt
+```
 
 Run all tests:
 ```bash
@@ -118,6 +153,30 @@ tests/test_main.py ..                                             [100%]
 - `s` = skipped test
 
 For failed tests, pytest shows the assertion that failed and a traceback.
+
+## Deployment
+
+### Prerequisites
+- gcloud CLI installed and authenticated
+- Secrets configured in GCP Secret Manager
+- Classifier model trained: `python train_classifier.py`
+- All tests passing: `pytest tests/ -v`
+
+### Deploy to Cloud Run
+```bash
+./deploy.sh
+```
+
+The script will:
+1. Run all tests locally (aborts if any fail)
+2. Deploy to Cloud Run with the pre-trained model
+
+### Required Secrets (already configured):
+- whatsapp-verify-token
+- whatsapp-app-secret
+- database-url
+- google-adk-api-key
+- encryption-key
 
 ## License
 
