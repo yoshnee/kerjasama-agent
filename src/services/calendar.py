@@ -47,6 +47,8 @@ def _sync_fetch_freebusy(
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
 
+    logger.info("Calendar fetch: client_id=%s, has_secret=%s", client_id, bool(client_secret))
+
     if not client_id or not client_secret:
         return CalendarResult(error="GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set")
 
@@ -147,7 +149,7 @@ async def get_calendar_availability(
 def format_availability(result: CalendarResult) -> str:
     """Format calendar result for the system prompt."""
     if result.error:
-        return f"Calendar unavailable: {result.error}"
+        return "CALENDAR_UNAVAILABLE"
 
     if not result.busy_periods:
         return "No busy slots found — the calendar appears open for the next 12 months."

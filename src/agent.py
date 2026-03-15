@@ -78,13 +78,25 @@ class ChatAgent:
             )
             oauth_token = result.scalar_one_or_none()
             if not oauth_token:
-                return "Calendar not connected."
+                logger.warning("No oauth_token found for user_id=%s", business.user_id)
+                return "CALENDAR_UNAVAILABLE"
+
+            logger.info(
+                "OAuth token found: id=%s, has_access=%s, has_refresh=%s, expires_at=%s",
+                oauth_token.id,
+                bool(oauth_token.access_token),
+                bool(oauth_token.refresh_token),
+                oauth_token.expires_at,
+            )
 
             access_token = decrypt_token(oauth_token.access_token)
             refresh_token = decrypt_token(oauth_token.refresh_token) if oauth_token.refresh_token else None
 
             if not access_token:
-                return "Calendar not available."
+                logger.error("Failed to decrypt access token for user_id=%s", business.user_id)
+                return "CALENDAR_UNAVAILABLE"
+
+            logger.info("Tokens decrypted successfully, fetching calendar for next 365 days")
 
             now = datetime.now(timezone.utc)
             time_max = now + timedelta(days=365)
@@ -98,7 +110,11 @@ class ChatAgent:
                 time_max=time_max,
                 db=db,
             )
+
+            if cal_result.error:
+                logger.error("Calendar fetch error: %s", cal_result.error)
+
             return format_availability(cal_result)
         except Exception as e:
-            logger.error("Failed to get availability: %s", e)
-            return "Calendar unavailable."
+            logger.error("Failed to get availability: %s", e, exc_info=True)
+            return "CALENDAR_UNAVAILABLE"
