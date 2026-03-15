@@ -24,9 +24,12 @@ gcloud run deploy $SERVICE_NAME \
   --add-cloudsql-instances=kerjasama-dev:europe-west2:kerjasama-db \
   --platform managed \
   --allow-unauthenticated \
+  --set-env-vars="\
+GOOGLE_CLIENT_ID=766885392730-5tmjtsturag2i5vmh2hg9hl9s33jq7hv.apps.googleusercontent.com" \
   --set-secrets="\
 GEMINI_API_KEY=gemini-api-key:latest,\
-ENCRYPTION_KEY=encryption-key:latest" \
+ENCRYPTION_KEY=encryption-key:latest,\
+GOOGLE_CLIENT_SECRET=google-client-secret:latest" \
   --memory=512Mi \
   --cpu=1 \
   --timeout=60 \
