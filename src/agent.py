@@ -81,14 +81,6 @@ class ChatAgent:
                 logger.warning("No oauth_token found for user_id=%s", business.user_id)
                 return "CALENDAR_UNAVAILABLE"
 
-            logger.info(
-                "OAuth token found: id=%s, has_access=%s, has_refresh=%s, expires_at=%s",
-                oauth_token.id,
-                bool(oauth_token.access_token),
-                bool(oauth_token.refresh_token),
-                oauth_token.expires_at,
-            )
-
             access_token = decrypt_token(oauth_token.access_token)
             refresh_token = decrypt_token(oauth_token.refresh_token) if oauth_token.refresh_token else None
 
@@ -96,10 +88,8 @@ class ChatAgent:
                 logger.error("Failed to decrypt access token for user_id=%s", business.user_id)
                 return "CALENDAR_UNAVAILABLE"
 
-            logger.info("Tokens decrypted successfully, fetching calendar for next 365 days")
-
             now = datetime.now(timezone.utc)
-            time_max = now + timedelta(days=365)
+            time_max = now + timedelta(days=90)
 
             cal_result = await get_calendar_availability(
                 access_token=access_token,

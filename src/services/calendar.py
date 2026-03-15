@@ -33,6 +33,7 @@ class CalendarResult:
     busy_periods: list[BusyPeriod] = field(default_factory=list)
     refreshed_token: Optional[str] = None
     refreshed_expiry: Optional[datetime] = None
+    timezone: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -46,8 +47,6 @@ def _sync_fetch_freebusy(
     """Synchronous Google Calendar FreeBusy call (run in executor)."""
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-
-    logger.info("Calendar fetch: client_id=%s, has_secret=%s", client_id, bool(client_secret))
 
     if not client_id or not client_secret:
         return CalendarResult(error="GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set")
@@ -83,9 +82,19 @@ def _sync_fetch_freebusy(
             logger.error("Failed to refresh token: %s", e)
             return CalendarResult(error=f"Token refresh failed: {e}")
 
-    # Query FreeBusy API
+    # Query FreeBusy API and calendar timezone
     try:
         service = build("calendar", "v3", credentials=credentials)
+
+        # Fetch the owner's calendar timezone
+        cal_timezone = None
+        try:
+            tz_setting = service.settings().get(setting="timezone").execute()
+            cal_timezone = tz_setting.get("value")
+            logger.info("Calendar timezone: %s", cal_timezone)
+        except Exception as e:
+            logger.warning("Could not fetch calendar timezone: %s", e)
+
         body = {
             "timeMin": time_min.isoformat(),
             "timeMax": time_max.isoformat(),
@@ -105,6 +114,7 @@ def _sync_fetch_freebusy(
             busy_periods=busy_periods,
             refreshed_token=refreshed_token,
             refreshed_expiry=refreshed_expiry,
+            timezone=cal_timezone,
         )
     except Exception as e:
         logger.error("FreeBusy query failed: %s", e)
@@ -147,23 +157,33 @@ async def get_calendar_availability(
 
 
 def format_availability(result: CalendarResult) -> str:
-    """Format calendar result for the system prompt."""
+    """Format calendar result for the system prompt, converting to local time."""
     if result.error:
         return "CALENDAR_UNAVAILABLE"
 
     if not result.busy_periods:
-        return "No busy slots found — the calendar appears open for the next 12 months."
+        return "No busy slots found — the calendar appears open for the next 3 months."
 
-    # Group busy periods by date
+    local_tz = None
+    if result.timezone:
+        try:
+            from zoneinfo import ZoneInfo
+            local_tz = ZoneInfo(result.timezone)
+        except Exception:
+            logger.warning("Could not parse timezone: %s", result.timezone)
+
+    # Group busy periods by date in local time
     by_date: dict[str, list[str]] = {}
     for period in result.busy_periods:
-        date_key = period.start.strftime("%A, %B %d")
-        start_time = period.start.strftime("%I:%M %p")
-        end_time = period.end.strftime("%I:%M %p")
+        start_local = period.start.astimezone(local_tz) if local_tz else period.start
+        end_local = period.end.astimezone(local_tz) if local_tz else period.end
+        date_key = start_local.strftime("%A, %B %d, %Y")
+        start_time = start_local.strftime("%I:%M %p")
+        end_time = end_local.strftime("%I:%M %p")
         by_date.setdefault(date_key, []).append(f"{start_time}-{end_time}")
 
     lines = []
     for date, slots in by_date.items():
         lines.append(f"- {date}: busy {', '.join(slots)}")
 
-    return "Busy slots:\n" + "\n".join(lines) + "\n\nAll other times are available."
+    return "Busy slots (local time):\n" + "\n".join(lines) + "\n\nAll other times are available."
