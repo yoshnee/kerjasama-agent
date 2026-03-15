@@ -2,8 +2,9 @@
 set -e
 
 PROJECT_ID="kerjasama-dev"
-SERVICE_NAME="kerjasama-agent"
+SERVICE_NAME="kerjasama-chat-api"
 REGION="europe-west1"
+SERVICE_ACCOUNT="kerjasama-chat-api@kerjasama-dev.iam.gserviceaccount.com"
 
 echo "Running tests..."
 pytest tests/ -v
@@ -19,17 +20,18 @@ gcloud run deploy $SERVICE_NAME \
   --source . \
   --project $PROJECT_ID \
   --region $REGION \
+  --service-account $SERVICE_ACCOUNT \
   --add-cloudsql-instances=kerjasama-dev:europe-west2:kerjasama-db \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars="\
-GOOGLE_CLIENT_ID=766885392730-5tmjtsturag2i5vmh2hg9hl9s33jq7hv.apps.googleusercontent.com" \
-  --set-secrets="WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token:latest,WHATSAPP_APP_SECRET=whatsapp-app-secret:latest,DATABASE_URL=database-url:latest,GOOGLE_ADK_API_KEY=google-adk-api-key:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,ENCRYPTION_KEY=encryption-key:latest" \
-  --memory=4Gi \
+  --set-secrets="\
+GEMINI_API_KEY=gemini-api-key:latest,\
+ENCRYPTION_KEY=encryption-key:latest" \
+  --memory=512Mi \
   --cpu=1 \
-  --timeout=90 \
+  --timeout=60 \
   --min-instances=0 \
-  --max-instances=5
+  --max-instances=10
 
 echo "Deployment complete!"
 echo "Service URL:"

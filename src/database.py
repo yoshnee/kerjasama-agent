@@ -1,27 +1,42 @@
-# database.py
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 import os
+
+from google.cloud.sql.connector import Connector
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+INSTANCE_CONNECTION_NAME = os.getenv("INSTANCE_CONNECTION_NAME", "kerjasama-dev:europe-west2:kerjasama-db")
+DB_NAME = os.getenv("DB_NAME", "kerjasama")
+DB_USER = os.getenv("DB_USER", "kerjasama-chat-api@kerjasama-dev.iam")
 
-# Create engine
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,  # Verify connections before using
-    echo=False  # Set to True to see SQL queries (useful for debugging)
+connector = Connector()
+
+
+async def getconn():
+    conn = await connector.connect_async(
+        INSTANCE_CONNECTION_NAME,
+        "asyncpg",
+        user=DB_USER,
+        db=DB_NAME,
+        enable_iam_auth=True,
+    )
+    return conn
+
+
+engine = create_async_engine(
+    "postgresql+asyncpg://",
+    async_creator=getconn,
+    pool_pre_ping=True,
+    echo=False,
 )
 
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
