@@ -4,6 +4,7 @@ pydantic
 python-dotenv
 sqlalchemy[asyncio]
 asyncpg
+cloud-sql-python-connector[asyncpg]
 httpx>=0.24.0
 cryptography
 google-genai

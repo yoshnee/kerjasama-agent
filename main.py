@@ -22,7 +22,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://chat.kerjasama.dev"],
+    allow_origins=[
+        "https://chat.kerjasama.dev",
+        "http://localhost:8080",
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

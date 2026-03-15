@@ -24,8 +24,6 @@ gcloud run deploy $SERVICE_NAME \
   --add-cloudsql-instances=kerjasama-dev:europe-west2:kerjasama-db \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars="\
-DATABASE_URL=postgresql+asyncpg://kerjasama-chat-api@kerjasama-dev.iam@/kerjasama?host=/cloudsql/kerjasama-dev:europe-west2:kerjasama-db" \
   --set-secrets="\
 GEMINI_API_KEY=gemini-api-key:latest,\
 ENCRYPTION_KEY=encryption-key:latest" \
