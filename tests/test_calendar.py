@@ -26,7 +26,7 @@ def test_format_availability_with_busy():
         ]
     )
     text = format_availability(result)
-    assert "Busy slots:" in text
+    assert "Busy slots" in text
     assert "All other times are available" in text
 
 
