@@ -1,162 +1,55 @@
-"""Google Calendar integration using FreeBusy API."""
+"""Google Calendar FreeBusy integration (async)."""
 
+import asyncio
 import logging
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database_client import DatabaseClient
+from src.models import OAuthToken
+from utils.crypto import encrypt_token
 
 logger = logging.getLogger(__name__)
 
-# Shared database client instance
-_db_client = DatabaseClient()
-
-# Buffer time before token expiry to trigger refresh (5 minutes)
 TOKEN_EXPIRY_BUFFER = timedelta(minutes=5)
 
 
 @dataclass
 class BusyPeriod:
-    """Represents a busy time slot from the calendar."""
-
     start: datetime
     end: datetime
 
 
 @dataclass
-class AvailabilityResult:
-    """Result of a calendar availability check."""
-
-    available: bool
-    busy_periods: list[BusyPeriod]
-    checked_range_start: datetime
-    checked_range_end: datetime
+class CalendarResult:
+    busy_periods: list[BusyPeriod] = field(default_factory=list)
+    refreshed_token: Optional[str] = None
+    refreshed_expiry: Optional[datetime] = None
     error: Optional[str] = None
 
 
-def get_calendar_availability(
+def _sync_fetch_freebusy(
     access_token: str,
     refresh_token: Optional[str],
     token_expiry: Optional[datetime],
-    oauth_token_id: uuid.UUID,
     time_min: datetime,
     time_max: datetime,
-) -> AvailabilityResult:
-    """
-    Check Google Calendar availability using FreeBusy API.
-
-    Args:
-        access_token: Google OAuth access token
-        refresh_token: Google OAuth refresh token (for refreshing expired tokens)
-        token_expiry: Token expiry datetime
-        oauth_token_id: OAuth token primary key (for updating after refresh)
-        time_min: Start of time range to check
-        time_max: End of time range to check
-
-    Returns:
-        AvailabilityResult with availability status and busy periods
-    """
-    try:
-        # Get credentials, refreshing if needed
-        credentials = _get_or_refresh_credentials(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_expiry=token_expiry,
-            oauth_token_id=oauth_token_id,
-        )
-
-        if credentials is None:
-            return AvailabilityResult(
-                available=False,
-                busy_periods=[],
-                checked_range_start=time_min,
-                checked_range_end=time_max,
-                error="Failed to obtain valid credentials",
-            )
-
-        # Build Calendar service
-        service = build("calendar", "v3", credentials=credentials)
-
-        # Query FreeBusy API
-        body = {
-            "timeMin": time_min.isoformat() + "Z" if time_min.tzinfo is None else time_min.isoformat(),
-            "timeMax": time_max.isoformat() + "Z" if time_max.tzinfo is None else time_max.isoformat(),
-            "items": [{"id": "primary"}],
-        }
-
-        logger.info("Querying FreeBusy API: %s to %s", time_min, time_max)
-        result = service.freebusy().query(body=body).execute()
-
-        # Parse busy periods
-        busy_periods = []
-        calendars = result.get("calendars", {})
-        primary_calendar = calendars.get("primary", {})
-        busy_times = primary_calendar.get("busy", [])
-
-        for busy in busy_times:
-            start = datetime.fromisoformat(busy["start"].replace("Z", "+00:00"))
-            end = datetime.fromisoformat(busy["end"].replace("Z", "+00:00"))
-            busy_periods.append(BusyPeriod(start=start, end=end))
-
-        is_available = len(busy_periods) == 0
-
-        logger.info(
-            "Availability check result: %s (%d busy periods)",
-            "Available" if is_available else "Busy",
-            len(busy_periods),
-        )
-
-        return AvailabilityResult(
-            available=is_available,
-            busy_periods=busy_periods,
-            checked_range_start=time_min,
-            checked_range_end=time_max,
-        )
-
-    except Exception as e:
-        logger.error("Calendar availability check failed: %s", str(e), exc_info=True)
-        return AvailabilityResult(
-            available=False,
-            busy_periods=[],
-            checked_range_start=time_min,
-            checked_range_end=time_max,
-            error=str(e),
-        )
-
-
-def _get_or_refresh_credentials(
-    access_token: str,
-    refresh_token: Optional[str],
-    token_expiry: Optional[datetime],
-    oauth_token_id: uuid.UUID,
-) -> Optional[Credentials]:
-    """
-    Get Google OAuth credentials, refreshing if expired.
-
-    Args:
-        access_token: Current access token
-        refresh_token: Refresh token for obtaining new access token
-        token_expiry: When the access token expires
-        oauth_token_id: OAuth token primary key for database update
-
-    Returns:
-        Valid Credentials object, or None if refresh failed
-    """
+) -> CalendarResult:
+    """Synchronous Google Calendar FreeBusy call (run in executor)."""
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
 
     if not client_id or not client_secret:
-        logger.error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set")
-        return None
+        return CalendarResult(error="GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set")
 
-    # Create credentials object
     credentials = Credentials(
         token=access_token,
         refresh_token=refresh_token,
@@ -166,63 +59,109 @@ def _get_or_refresh_credentials(
     )
 
     # Check if token needs refresh
+    refreshed_token = None
+    refreshed_expiry = None
     now = datetime.now(timezone.utc)
-    needs_refresh = False
 
+    needs_refresh = False
     if token_expiry:
-        # Make token_expiry timezone-aware if it isn't
         if token_expiry.tzinfo is None:
             token_expiry = token_expiry.replace(tzinfo=timezone.utc)
         needs_refresh = token_expiry < now + TOKEN_EXPIRY_BUFFER
 
     if needs_refresh or not access_token:
         if not refresh_token:
-            logger.error("Token expired and no refresh token available")
-            return None
-
-        logger.info("Refreshing expired access token")
+            return CalendarResult(error="Token expired and no refresh token available")
         try:
             credentials.refresh(Request())
-
-            # Update token in database
-            _db_client.update_oauth_token(
-                oauth_token_id=oauth_token_id,
-                access_token=credentials.token,
-                token_expiry=credentials.expiry,
-            )
-
+            refreshed_token = credentials.token
+            refreshed_expiry = credentials.expiry
             logger.info("Access token refreshed successfully")
         except Exception as e:
-            logger.error("Failed to refresh access token: %s", str(e), exc_info=True)
-            return None
+            logger.error("Failed to refresh token: %s", e)
+            return CalendarResult(error=f"Token refresh failed: {e}")
 
-    return credentials
+    # Query FreeBusy API
+    try:
+        service = build("calendar", "v3", credentials=credentials)
+        body = {
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "items": [{"id": "primary"}],
+        }
+        result = service.freebusy().query(body=body).execute()
+
+        busy_periods = []
+        calendars = result.get("calendars", {})
+        primary = calendars.get("primary", {})
+        for busy in primary.get("busy", []):
+            start = datetime.fromisoformat(busy["start"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(busy["end"].replace("Z", "+00:00"))
+            busy_periods.append(BusyPeriod(start=start, end=end))
+
+        return CalendarResult(
+            busy_periods=busy_periods,
+            refreshed_token=refreshed_token,
+            refreshed_expiry=refreshed_expiry,
+        )
+    except Exception as e:
+        logger.error("FreeBusy query failed: %s", e)
+        return CalendarResult(error=str(e))
 
 
-def format_availability_for_prompt(result: AvailabilityResult) -> str:
-    """
-    Format availability result for use in AI prompt.
+async def get_calendar_availability(
+    access_token: str,
+    refresh_token: Optional[str],
+    token_expiry: Optional[datetime],
+    oauth_token_id: uuid.UUID,
+    time_min: datetime,
+    time_max: datetime,
+    db: AsyncSession,
+) -> CalendarResult:
+    """Fetch calendar availability asynchronously."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        _sync_fetch_freebusy,
+        access_token,
+        refresh_token,
+        token_expiry,
+        time_min,
+        time_max,
+    )
 
-    Args:
-        result: AvailabilityResult from calendar check
+    # If token was refreshed, persist to DB
+    if result.refreshed_token:
+        encrypted = encrypt_token(result.refreshed_token)
+        if encrypted:
+            await db.execute(
+                update(OAuthToken)
+                .where(OAuthToken.id == oauth_token_id)
+                .values(access_token=encrypted, expires_at=result.refreshed_expiry)
+            )
+            await db.commit()
 
-    Returns:
-        Human-readable string describing availability
-    """
+    return result
+
+
+def format_availability(result: CalendarResult) -> str:
+    """Format calendar result for the system prompt."""
     if result.error:
-        return f"Unable to check calendar: {result.error}"
+        return f"Calendar unavailable: {result.error}"
 
-    date_str = result.checked_range_start.strftime("%B %d, %Y")
+    if not result.busy_periods:
+        return "No busy slots found — the calendar appears open for the next 12 months."
 
-    if result.available:
-        return f"Available on {date_str}"
-
-    # Format busy periods
-    busy_strs = []
+    # Group busy periods by date
+    by_date: dict[str, list[str]] = {}
     for period in result.busy_periods:
+        date_key = period.start.strftime("%A, %B %d")
         start_time = period.start.strftime("%I:%M %p")
         end_time = period.end.strftime("%I:%M %p")
-        busy_strs.append(f"{start_time} - {end_time}")
+        by_date.setdefault(date_key, []).append(f"{start_time}-{end_time}")
 
-    busy_list = ", ".join(busy_strs)
-    return f"Busy on {date_str} during: {busy_list}"
+    lines = []
+    for date, slots in by_date.items():
+        lines.append(f"- {date}: busy {', '.join(slots)}")
+
+    return "Busy slots:\n" + "\n".join(lines) + "\n\nAll other times are available."

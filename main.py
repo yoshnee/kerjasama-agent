@@ -1,43 +1,35 @@
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
-from src.webhook import router as webhook_router, init_services
+from src.routes.chat import router as chat_router
 
-# Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan handler for startup and shutdown."""
-    # Startup
-    logger.info("Starting up Kerjasama Agent...")
-    init_services()
-    logger.info("Startup complete")
-
-    yield
-
-    # Shutdown
-    logger.info("Shutting down Kerjasama Agent...")
-
-
-app = FastAPI(
-    title="Kerjasama Agent",
-    version="0.1.0",
-    lifespan=lifespan
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
-# Include webhook router
-app.include_router(webhook_router)
+limiter = Limiter(key_func=get_remote_address)
+
+app = FastAPI(title="Kerjasama Chat API", version="1.0.0")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://chat.kerjasama.dev"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+app.include_router(chat_router)
 
 
 @app.get("/")
-async def health_check():
-    """Health check endpoint."""
+async def health():
     return {"status": "healthy"}
