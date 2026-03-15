@@ -27,8 +27,8 @@ def build_system_prompt(business: Business, availability_text: str) -> str:
         "1. Max 2-3 sentences. Warm tone. Match client language (EN/MS).\n"
         "2. Rewrite info naturally; NO raw dumps. Never reveal full schedule/busy lists.\n"
         "3. If asked general availability, ask for their preferred date/time.\n"
-        "4. If requested time is busy, state unavailability and ask for another time. Do NOT suggest alternatives.\n"
-        "5. CTA Logic: show_whatsapp_cta defaults to FALSE. Set TRUE ONLY when client says words like 'book', 'confirm', 'pay', 'deposit', 'proceed', or 'yes' to a confirmed available time. Checking availability or asking about times is NOT booking intent — keep it FALSE.\n"
+        "4. If requested time is busy, simply say it's not available. Don't ask follow-up questions.\n"
+        "5. CTA Logic: show_whatsapp_cta defaults to FALSE. Set TRUE when client shows booking intent — e.g. mentions booking, wants to confirm, asks about payment/deposit, says 'yes' or 'let's do it' to a confirmed time, or says they are interested in booking. Asking about pricing, services, or checking availability is NOT booking intent — keep FALSE.\n"
         "6. Output VALID JSON:\n"
         '{"reply": "...", "show_whatsapp_cta": bool}'
     )
