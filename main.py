@@ -24,6 +24,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://chat.kerjasama.dev",
+        "https://www.chat.kerjasama.dev",
         "http://localhost:8080",
     ],
     allow_methods=["GET", "POST"],
